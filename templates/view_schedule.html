@@ -1,6 +1,28 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+.schedule-item.online {
+    background-color: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    padding: 5px;
+    margin-bottom: 5px;
+    border-radius: 3px;
+}
+
+.schedule-item.online::before {
+    content: "🌐 ";
+    font-weight: bold;
+}
+
+.schedule-item {
+    margin-bottom: 10px;
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+}
+</style>
+
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2>Ders Programı</h2>
@@ -132,7 +154,7 @@
                             <td>
                                 {% for schedule in blm_schedule_items|sort(attribute='start_time') %}
                                 {% if schedule.day == day and schedule.course.semester <= 2 %}
-                                <div class="schedule-item">
+                                <div class="schedule-item{% if schedule.course.course_type == 'online' %} online{% endif %}">
                                     <strong>{{ schedule.course.code }}</strong><br>
                                     {{ schedule.course.name }}<br>
                                     {{ schedule.start_time }}-{{ schedule.end_time }}<br>
@@ -153,7 +175,7 @@
                             <td>
                                 {% for schedule in blm_schedule_items|sort(attribute='start_time') %}
                                 {% if schedule.day == day and schedule.course.semester > 2 and schedule.course.semester <= 4 %}
-                                <div class="schedule-item">
+                                <div class="schedule-item{% if schedule.course.course_type == 'online' %} online{% endif %}">
                                     <strong>{{ schedule.course.code }}</strong><br>
                                     {{ schedule.course.name }}<br>
                                     {{ schedule.start_time }}-{{ schedule.end_time }}<br>
@@ -174,7 +196,7 @@
                             <td>
                                 {% for schedule in blm_schedule_items|sort(attribute='start_time') %}
                                 {% if schedule.day == day and schedule.course.semester > 4 and schedule.course.semester <= 6 %}
-                                <div class="schedule-item">
+                                <div class="schedule-item{% if schedule.course.course_type == 'online' %} online{% endif %}">
                                     <strong>{{ schedule.course.code }}</strong><br>
                                     {{ schedule.course.name }}<br>
                                     {{ schedule.start_time }}-{{ schedule.end_time }}<br>
@@ -195,7 +217,7 @@
                             <td>
                                 {% for schedule in blm_schedule_items|sort(attribute='start_time') %}
                                 {% if schedule.day == day and schedule.course.semester > 6 %}
-                                <div class="schedule-item">
+                                <div class="schedule-item{% if schedule.course.course_type == 'online' %} online{% endif %}">
                                     <strong>{{ schedule.course.code }}</strong><br>
                                     {{ schedule.course.name }}<br>
                                     {{ schedule.start_time }}-{{ schedule.end_time }}<br>
@@ -247,7 +269,7 @@
                             <td>
                                 {% for schedule in yzm_schedule_items|sort(attribute='start_time') %}
                                 {% if schedule.day == day and schedule.course.semester <= 2 %}
-                                <div class="schedule-item">
+                                <div class="schedule-item{% if schedule.course.course_type == 'online' %} online{% endif %}">
                                     <strong>{{ schedule.course.code }}</strong><br>
                                     {{ schedule.course.name }}<br>
                                     {{ schedule.start_time }}-{{ schedule.end_time }}<br>
@@ -268,7 +290,7 @@
                             <td>
                                 {% for schedule in yzm_schedule_items|sort(attribute='start_time') %}
                                 {% if schedule.day == day and schedule.course.semester > 2 and schedule.course.semester <= 4 %}
-                                <div class="schedule-item">
+                                <div class="schedule-item{% if schedule.course.course_type == 'online' %} online{% endif %}">
                                     <strong>{{ schedule.course.code }}</strong><br>
                                     {{ schedule.course.name }}<br>
                                     {{ schedule.start_time }}-{{ schedule.end_time }}<br>
@@ -289,7 +311,7 @@
                             <td>
                                 {% for schedule in yzm_schedule_items|sort(attribute='start_time') %}
                                 {% if schedule.day == day and schedule.course.semester > 4 and schedule.course.semester <= 6 %}
-                                <div class="schedule-item">
+                                <div class="schedule-item{% if schedule.course.course_type == 'online' %} online{% endif %}">
                                     <strong>{{ schedule.course.code }}</strong><br>
                                     {{ schedule.course.name }}<br>
                                     {{ schedule.start_time }}-{{ schedule.end_time }}<br>
@@ -310,7 +332,7 @@
                             <td>
                                 {% for schedule in yzm_schedule_items|sort(attribute='start_time') %}
                                 {% if schedule.day == day and schedule.course.semester > 6 %}
-                                <div class="schedule-item">
+                                <div class="schedule-item{% if schedule.course.course_type == 'online' %} online{% endif %}">
                                     <strong>{{ schedule.course.code }}</strong><br>
                                     {{ schedule.course.name }}<br>
                                     {{ schedule.start_time }}-{{ schedule.end_time }}<br>
@@ -337,13 +359,34 @@
     {% endif %}
 </div>
 
-<style>
-.schedule-item {
-    padding: 5px;
-    margin: 2px;
-    background-color: #f8f9fa;
-    border-radius: 4px;
-    font-size: 0.9em;
-}
-</style>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const courseSelect = document.getElementById('course_id');
+    const classroomSelect = document.getElementById('classroom_id');
+    
+    if (courseSelect && classroomSelect) {
+        courseSelect.addEventListener('change', function() {
+            const selectedOption = courseSelect.options[courseSelect.selectedIndex];
+            const courseText = selectedOption.text;
+            
+            // Ders adından online olup olmadığını kontrol et (basit yaklaşım)
+            // Gerçek kontrol için AJAX kullanılabilir ama bu da yeterli
+            if (courseText.toLowerCase().includes('online')) {
+                // Online dersliğini bul ve seç
+                for (let i = 0; i < classroomSelect.options.length; i++) {
+                    if (classroomSelect.options[i].text.includes('Online')) {
+                        classroomSelect.selectedIndex = i;
+                        classroomSelect.disabled = true;
+                        break;
+                    }
+                }
+            } else {
+                classroomSelect.disabled = false;
+                classroomSelect.selectedIndex = 0; // "Derslik Seçin" seçeneğine dön
+            }
+        });
+    }
+});
+</script>
+
 {% endblock %} 

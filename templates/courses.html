@@ -82,6 +82,67 @@
         </div>
     </div>
 
+    <!-- Veritabanını temizleme modal'ı - ÇOOK TEHLİKELİ! -->
+    <div class="modal fade" id="clearDatabaseModal" tabindex="-1" aria-labelledby="clearDatabaseModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content border-danger">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title" id="clearDatabaseModalLabel">⚠️ TEHLİKELİ ALAN ⚠️ Veritabanını Temizle</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger border-danger">
+                        <h4 class="alert-heading">🚨 UYARI: Bu işlem GERİ ALINAMAZ! 🚨</h4>
+                        <hr>
+                        <p class="mb-0">Bu işlem <strong>TÜM VERİTABANINI TEMİZLEYECEK</strong>:</p>
+                        <ul class="mt-2">
+                            <li>✖️ Tüm dersler silinecek</li>
+                            <li>✖️ Tüm öğrenciler silinecek</li>
+                            <li>✖️ Tüm öğretim üyeleri silinecek</li>
+                            <li>✖️ Tüm bölümler silinecek</li>
+                            <li>✖️ Tüm derslikler silinecek</li>
+                            <li>✖️ Tüm ders programları silinecek</li>
+                        </ul>
+                        <p class="mt-3 mb-0"><strong>⚠️ Yalnızca sistem sıfırlaması için kullanın!</strong></p>
+                    </div>
+                    
+                    <form action="{{ url_for('clear_database') }}" method="POST" id="clearDatabaseForm">
+                        <div class="mb-3">
+                            <label for="admin_password" class="form-label text-danger">
+                                <strong>Admin Şifrenizi Girin (Onay İçin):</strong>
+                            </label>
+                            <input type="password" class="form-control border-danger" id="admin_password" name="admin_password" placeholder="Admin şifrenizi buraya yazın..." required>
+                            <small class="form-text text-muted">Güvenlik için mevcut admin şifrenizi girmelisiniz.</small>
+                        </div>
+                        
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="confirmDangerous" required>
+                            <label class="form-check-label text-danger" for="confirmDangerous">
+                                <strong>Bu işlemin GERİ ALINAMAZ olduğunu anlıyorum ve tüm verileri silmek istiyorum</strong>
+                            </label>
+                        </div>
+                        
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="checkbox" id="confirmUnderstand" required>
+                            <label class="form-check-label text-danger" for="confirmUnderstand">
+                                <strong>Veritabanındaki TÜM verilerin kaybolacağını anlıyorum</strong>
+                            </label>
+                        </div>
+                        
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-danger btn-lg" id="finalConfirmBtn" disabled>
+                                🗑️ EVET, VERİTABANINI TEMİZLE!
+                            </button>
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                                ❌ Vazgeç (Güvenli Seçenek)
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Dersler tablosu -->
     <div class="card">
         <div class="card-header">
@@ -96,6 +157,9 @@
                     </a>
                     <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addCourseModal">
                         <i class="bi bi-plus-circle me-1"></i> Ders Ekle
+                    </button>
+                    <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#clearDatabaseModal">
+                        <i class="bi bi-trash me-1"></i> 🗑️ Veritabanını Sil
                     </button>
                 </div>
             </div>
@@ -162,6 +226,71 @@ document.addEventListener('DOMContentLoaded', function() {
                 this.submit();
             }
         });
+    });
+    
+    // ============ VERİTABANI TEMİZLEME MODAL KONTROLLERI ============
+    const clearDbForm = document.getElementById('clearDatabaseForm');
+    const confirmDangerous = document.getElementById('confirmDangerous');
+    const confirmUnderstand = document.getElementById('confirmUnderstand');
+    const finalConfirmBtn = document.getElementById('finalConfirmBtn');
+    const adminPasswordInput = document.getElementById('admin_password');
+    
+    // Checkbox değişikliklerini dinle
+    function checkFormValidity() {
+        const bothChecked = confirmDangerous.checked && confirmUnderstand.checked;
+        const passwordFilled = adminPasswordInput.value.length > 0;
+        
+        // Her iki checkbox işaretli ve şifre girilmişse butonu aktifleştir
+        finalConfirmBtn.disabled = !(bothChecked && passwordFilled);
+        
+        if (bothChecked && passwordFilled) {
+            finalConfirmBtn.classList.remove('btn-secondary');
+            finalConfirmBtn.classList.add('btn-danger');
+            finalConfirmBtn.innerHTML = '🗑️ EVET, VERİTABANINI TEMİZLE!';
+        } else {
+            finalConfirmBtn.classList.add('btn-secondary');
+            finalConfirmBtn.classList.remove('btn-danger');
+            finalConfirmBtn.innerHTML = '❌ Lütfen tüm onayları verin';
+        }
+    }
+    
+    // Event listener'ları ekle
+    confirmDangerous.addEventListener('change', checkFormValidity);
+    confirmUnderstand.addEventListener('change', checkFormValidity);
+    adminPasswordInput.addEventListener('input', checkFormValidity);
+    
+    // Form gönderilirken son bir kez onay iste
+    clearDbForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        // Son onay
+        const finalConfirm = confirm(
+            '🚨 SON UYARI! 🚨\n\n' +
+            'Bu işlem TÜM VERİTABANINI TEMİZLEYECEK!\n' +
+            '• Tüm dersler\n' +
+            '• Tüm öğrenciler\n' +
+            '• Tüm öğretim üyeleri\n' +
+            '• Tüm bölümler\n' +
+            '• Tüm ders programları\n\n' +
+            'Bu işlem GERİ ALINAMAZ!\n\n' +
+            'Emin misiniz?'
+        );
+        
+        if (finalConfirm) {
+            // Butonu devre dışı bırak ve yükleniyor yap
+            finalConfirmBtn.disabled = true;
+            finalConfirmBtn.innerHTML = '🔄 Veritabanı temizleniyor...';
+            
+            // Formu gönder
+            this.submit();
+        }
+    });
+    
+    // Modal kapandığında formu sıfırla
+    const clearDatabaseModal = document.getElementById('clearDatabaseModal');
+    clearDatabaseModal.addEventListener('hidden.bs.modal', function() {
+        clearDbForm.reset();
+        checkFormValidity();
     });
 });
 </script>

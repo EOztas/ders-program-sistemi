@@ -6,37 +6,92 @@
         <div class="col-md-12">
             <div class="card">
                 <div class="card-header bg-primary text-white">
-                    <h4 class="mb-0">Excel'den Ders Verisi İçe Aktar</h4>
+                    <h4 class="mb-0">Excel'den Ders Verisi İçe Aktar - Yeni Format</h4>
                 </div>
                 <div class="card-body">
                     <div class="alert alert-info">
-                        <h5>Excel Dosyası Formatı:</h5>
-                        <p>Lütfen aşağıdaki sütunları içeren bir Excel dosyası yükleyin:</p>
-                        <ol>
-                            <li><strong>BÖLÜM</strong>: Bölüm kodu (örn. BLM, YZM)</li>
-                            <li><strong>YARI YIL</strong>: Dersin yarıyılı (1-8 arası sayı)</li>
-                            <li><strong>DERS KODU</strong>: Dersin kodu (örn. BLM101)</li>
-                            <li><strong>DERS ADI</strong>: Dersin adı</li>
-                            <li><strong>DERSİN ÖĞRETİM ÜYESİ</strong>: Öğretim üyesinin adı soyadı</li>
-                            <li><strong>DERSİN TÜRÜ</strong>: YÜZYÜZE veya ONLINE</li>
-                            <li><strong>DERSİN KONTENJANI</strong>: Dersin kontenjanı (sayı)</li>
-                        </ol>
-                        <p><strong>Not:</strong> İlk satır başlık olarak kabul edilecek ve atlanacaktır.</p>
+                        <h5>Yeni Excel Dosyası Formatı:</h5>
+                        <p>Excel dosyasında <strong>her sheet ayrı bir ders</strong> olarak işlenecektir. Her sheet için gerekli format:</p>
+                        <ul>
+                            <li><strong>Sheet İsmi</strong>: Dersin adı ve kodu (örn. "Veri Yapıları")</li>
+                            <li><strong>2B Hücresi</strong>: Dersi veren öğretim üyesinin adı soyadı</li>
+                            <li><strong>4. satırdan itibaren</strong>: Her satır bir öğrenci bilgilerini içerir:</li>
+                            <ul>
+                                <li><strong>A sütunu</strong>: Öğrencinin bölümü</li>
+                                <li><strong>B sütunu</strong>: Öğrencinin sınıfı</li>
+                                <li><strong>C sütunu</strong>: Öğrenci numarası</li>
+                            </ul>
+                        </ul>
+                        <p><strong>Örnek Sheet Formatı:</strong></p>
+                        <table class="table table-bordered table-sm">
+                            <tr>
+                                <td></td>
+                                <td><strong>A</strong></td>
+                                <td><strong>B</strong></td>
+                                <td><strong>C</strong></td>
+                            </tr>
+                            <tr>
+                                <td><strong>2</strong></td>
+                                <td></td>
+                                <td>Dr. Ahmet Yılmaz</td>
+                                <td></td>
+                            </tr>
+                            <tr>
+                                <td><strong>3</strong></td>
+                                <td>Bölüm</td>
+                                <td>Sınıf</td>
+                                <td>Öğrenci Numarası</td>
+                            </tr>
+                            <tr>
+                                <td><strong>4</strong></td>
+                                <td>Yazılım Mühendisliği</td>
+                                <td>3. Sınıf</td>
+                                <td>12345</td>
+                            </tr>
+                            <tr>
+                                <td><strong>5</strong></td>
+                                <td>Yazılım Mühendisliği</td>
+                                <td>3. Sınıf</td>
+                                <td>12346</td>
+                            </tr>
+                            <tr>
+                                <td><strong>6</strong></td>
+                                <td>Bilgisayar Mühendisliği</td>
+                                <td>2. Sınıf</td>
+                                <td>54321</td>
+                            </tr>
+                            <tr>
+                                <td><strong>...</strong></td>
+                                <td>...</td>
+                                <td>...</td>
+                                <td>...</td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div class="alert alert-success">
+                        <h5>İşlem Sonuçları:</h5>
+                        <ul>
+                            <li><strong>Dersler</strong>: Her sheet'den bir ders oluşturulacak (sheet ismi = ders adı ve kodu)</li>
+                            <li><strong>Bölümler</strong>: Öğrenci verilerinden tespit edilen bölümler derse atanacak</li>
+                            <li><strong>Kontenjan</strong>: Sheetteki toplam öğrenci sayısı kadar ayarlanacak</li>
+                            <li><strong>Yarıyıl</strong>: Şimdilik boş bırakılacak (sonradan düzenlenebilir)</li>
+                        </ul>
                     </div>
 
                     <div class="alert alert-warning">
-                        <h5>Öğretim Üyeleri Hakkında Bilgi:</h5>
-                        <p>Excel dosyasından okunan öğretim üyeleri için:</p>
+                        <h5>Otomatik Kullanıcı Oluşturma:</h5>
                         <ul>
-                            <li>Kullanıcı adı, adının ilk 3 harfi + soyadının ilk 3 harfi olarak otomatik oluşturulacaktır (örn. "Naciye Naci" için "nacnac").</li>
-                            <li>Şifre varsayılan olarak "123" olarak ayarlanacaktır.</li>
-                            <li>Aynı kullanıcı adına sahip bir öğretim üyesi varsa, mevcut kullanıcı bilgileri korunacaktır.</li>
+                            <li><strong>Öğretim Üyeleri</strong>: Adının ilk 3 + soyadının ilk 3 harfi = kullanıcı adı (şifre: 123)</li>
+                            <li><strong>Öğrenciler</strong>: Öğrenci numarası = kullanıcı adı (şifre: 123)</li>
+                            <li><strong>Bölümler</strong>: Yoksa otomatik oluşturulacak</li>
+                            <li>Mevcut kayıtlar korunacak, sadece yeniler eklenecek</li>
                         </ul>
                     </div>
 
                     <form method="POST" enctype="multipart/form-data">
                         <div class="form-group mb-3">
-                            <label for="excel_file">Excel Dosyası Seçin:</label>
+                            <label for="excel_file">Excel Dosyası Seçin (Multiple Sheet):</label>
                             <input type="file" class="form-control" id="excel_file" name="excel_file" accept=".xlsx,.xls" required>
                         </div>
                         <button type="submit" class="btn btn-primary">Yükle ve İçe Aktar</button>

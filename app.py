@@ -475,8 +475,22 @@ def add_schedule():
         course = Course.query.get(course_id)
         classroom = Classroom.query.get(classroom_id)
         
-        # Derslik kapasitesi kontrolü
-        if course.capacity > classroom.capacity:
+        # Online derslerin özel kontrolü
+        if course.course_type == 'online':
+            # Online dersler için Online dersliğini kullan
+            online_classroom = Classroom.query.filter_by(code='Online').first()
+            if not online_classroom:
+                flash('Online dersliği bulunamadı! Lütfen önce Online dersliğini oluşturun.', 'error')
+                return redirect(url_for('view_schedule'))
+            
+            # Online dersler için dersliği Online olarak değiştir
+            classroom_id = online_classroom.id
+            classroom = online_classroom
+            
+            print(f"Online ders tespit edildi: {course.code} - Online dersliğine atanıyor")
+        
+        # Derslik kapasitesi kontrolü (Online dersliği için atla)
+        if classroom.code != 'Online' and course.capacity > classroom.capacity:
             flash(f'Derslik kapasitesi ({classroom.capacity}) dersin kontenjanından ({course.capacity}) küçük. Bu derslik bu ders için uygun değil.', 'error')
             return redirect(url_for('view_schedule'))
 
@@ -518,25 +532,56 @@ def add_schedule():
                 flash(f'Öğretim üyesi ({instructor.name}) başka derste meşgul: {conflict_message}', 'error')
                 return redirect(url_for('view_schedule'))
 
-        # Seçilen derslik ve zamanda başka ders var mı kontrol et
-        classroom_conflicts = Schedule.query.filter(
+        # Sınıf seviyesi çakışma kontrolü (Manuel ekleme için de)
+        semester = course.semester
+        class_level = ((semester - 1) // 2) + 1  # 1,2 -> 1. sınıf, 3,4 -> 2. sınıf, vb.
+        class_semesters = [(class_level - 1) * 2 + 1, (class_level - 1) * 2 + 2]  # O sınıfın yarıyılları
+        
+        print(f"MANUEL EKLEME ÇAKIŞMA KONTROLÜ: {course.code} dersi (Yarıyıl: {semester}, Sınıf: {class_level})")
+        
+        # BÖLÜMDEN BAĞIMSIZ SINIF SEVİYESİ ÇAKIŞMA KONTROLÜ (Manuel ekleme için)
+        # Aynı sınıf seviyesindeki TÜM dersler (hangi bölümden olursa olsun) çakışmamalı
+        conflict_schedules = db.session.query(Schedule).join(Course).filter(
             Schedule.day == day,
-            Schedule.start_time < end_time,
-            Schedule.end_time > start_time,
-            Schedule.classroom_id == classroom_id
+            Schedule.start_time == start_time,
+            Schedule.end_time == end_time,
+            Course.semester.in_(class_semesters)  # Aynı sınıfın tüm yarıyılları, bölüm fark etmez
         ).all()
         
-        if classroom_conflicts:
-            # Derslik çakışması varsa uyar
-            conflict_details = []
-            for conflict in classroom_conflicts:
-                conflict_course = Course.query.get(conflict.course_id)
-                conflict_details.append(f"{conflict_course.code} ({conflict.start_time}-{conflict.end_time})")
+        if conflict_schedules:
+            conflict_courses = []
+            for schedule in conflict_schedules:
+                conflict_course = Course.query.get(schedule.course_id)
+                # Çakışan dersin bölümlerini de göster
+                conflict_dept_codes = [d.code for d in conflict_course.departments]
+                conflict_courses.append(f"{conflict_course.code} (Yarıyıl: {conflict_course.semester}, Bölümler: {', '.join(conflict_dept_codes)}, Tür: {conflict_course.course_type})")
             
-            conflict_message = ", ".join(conflict_details)
-            conflict_classroom = Classroom.query.get(classroom_id)
-            flash(f'Derslik {conflict_classroom.code} bu saatte dolu: {conflict_message}', 'error')
+            course_dept_codes = [d.code for d in course.departments]
+            conflict_message = ", ".join(conflict_courses)
+            flash(f'SINIF ÇAKIŞMASI: {course.code} dersi (Bölümler: {", ".join(course_dept_codes)}, Tür: {course.course_type}) {class_level}. sınıfında aynı saatte şu derslerle çakışıyor: {conflict_message}', 'error')
             return redirect(url_for('view_schedule'))
+
+        # Seçilen derslik ve zamanda başka ders var mı kontrol et (Online dersliği için atla)
+        if classroom.code != 'Online':
+            classroom_conflicts = Schedule.query.filter(
+                Schedule.day == day,
+                Schedule.start_time < end_time,
+                Schedule.end_time > start_time,
+                Schedule.classroom_id == classroom_id
+            ).all()
+            
+            if classroom_conflicts:
+                # Derslik çakışması varsa uyar
+                conflict_details = []
+                for conflict in classroom_conflicts:
+                    conflict_course = Course.query.get(conflict.course_id)
+                    conflict_details.append(f"{conflict_course.code} ({conflict.start_time}-{conflict.end_time})")
+                
+                conflict_message = ", ".join(conflict_details)
+                flash(f'Derslik {classroom.code} bu saatte dolu: {conflict_message}', 'error')
+                return redirect(url_for('view_schedule'))
+        else:
+            print(f"Online derslik kullanılıyor - çakışma kontrolü atlandı")
         
         # Yeni program öğesi oluştur ve kaydet
         schedule_item = Schedule(
@@ -987,13 +1032,14 @@ def generate_schedule(term=None):
     """
     Otomatik ders programı oluşturma fonksiyonu
     term: "guz" veya "bahar" olabilir. Güz ise 1,3,5,7. yarıyıllar, Bahar ise 2,4,6,8. yarıyıllar.
+    GÜNCELLEME: Mevcut manuel eklenen dersleri korur, sadece programlanmamış dersleri yerleştirir.
     """
     try:
         # Debug modunu kapalı tut - çok fazla loglama olmasın
-        debug_mode = False
+        debug_mode = False  # Debug modunu kapattık
         
-        # Mevcut programı temizle
-        Schedule.query.delete()
+        # MEVCUT PROGRAMI SİLME - Sadece eksik dersleri tamamla
+        # Schedule.query.delete()  # Bu satırı kaldırdık!
         
         # Haftanın günleri ve saatler
         days = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma']
@@ -1026,12 +1072,30 @@ def generate_schedule(term=None):
         # Seçilen yarıyıllardaki tüm dersleri al
         all_courses = Course.query.filter(Course.semester.in_(semesters)).all()
         
-        # BLM ve YZM bölümlerine ait dersleri belirle
-        # Artık bir ders birden fazla bölüme ait olabilir
+        # Zaten programlanmış dersleri bul
+        existing_schedules = Schedule.query.all()
+        scheduled_course_ids = set([schedule.course_id for schedule in existing_schedules])
+        
+        print(f"\n=== {term_name} Dönemi Programı Tamamlanıyor ===")
+        print(f"İşlenecek yarıyıllar: {semesters}")
+        print(f"Mevcut programda {len(existing_schedules)} ders zaten yerleştirilmiş")
+        print(f"Zaten programlanmış ders ID'leri: {scheduled_course_ids}")
+        
+        # Sadece henüz programlanmamış dersleri belirle
+        unscheduled_courses = [course for course in all_courses if course.id not in scheduled_course_ids]
+        
+        print(f"Programlanmamış ders sayısı: {len(unscheduled_courses)}")
+        if debug_mode:
+            print("Programlanmamış dersler:")
+            for course in unscheduled_courses:
+                dept_codes = [d.code for d in course.departments]
+                print(f"- {course.code} - {course.name} (Bölümler: {', '.join(dept_codes)})")
+        
+        # BLM ve YZM bölümlerine ait programlanmamış dersleri belirle
         blm_courses = []
         yzm_courses = []
         
-        for course in all_courses:
+        for course in unscheduled_courses:
             # Her dersin bölümlerini kontrol et
             departments = [d.id for d in course.departments]
             if blm_dept.id in departments:
@@ -1042,45 +1106,19 @@ def generate_schedule(term=None):
         classrooms = Classroom.query.all()
         unavailable_times = UnavailableTime.query.all()
         
-        print(f"\n=== {term_name} Dönemi Programı Oluşturuluyor ===")
-        print(f"İşlenecek yarıyıllar: {semesters}")
-        if debug_mode:
-            print(f"BLM ders sayısı: {len(blm_courses)}")
-            print(f"YZM ders sayısı: {len(yzm_courses)}")
-        
         # Ortak dersleri bul (her iki bölüme de ait olan dersler)
         common_courses = []
-        blm_course_codes = {course.code for course in blm_courses}
-        yzm_course_codes = {course.code for course in yzm_courses}
         
-        for course in all_courses:
+        for course in unscheduled_courses:
             # Birden fazla bölüme ait olan dersleri belirle
             departments = [d.id for d in course.departments]
             if blm_dept.id in departments and yzm_dept.id in departments:
                 common_courses.append(course)
         
         if debug_mode:
-            print(f"Ortak ders sayısı: {len(common_courses)}")
-            
-            # Debug: Tüm dersleri yazdır
-            print("\n=== TÜM DERSLER ===")
-            print("BLM Dersleri:")
-            for course in blm_courses:
-                # Her dersin bölümlerini göster
-                dept_codes = [d.code for d in course.departments]
-                print(f"- {course.code} - {course.name} (Yarıyıl: {course.semester}, Bölümler: {', '.join(dept_codes)})")
-            
-            print("\nYZM Dersleri:")
-            for course in yzm_courses:
-                # Her dersin bölümlerini göster
-                dept_codes = [d.code for d in course.departments]
-                print(f"- {course.code} - {course.name} (Yarıyıl: {course.semester}, Bölümler: {', '.join(dept_codes)})")
-            
-            print("\n=== ORTAK DERSLER ===")
-            for course in common_courses:
-                # Ortak dersleri göster
-                dept_codes = [d.code for d in course.departments]
-                print(f"- {course.code} - {course.name} (Yarıyıl: {course.semester}, Bölümler: {', '.join(dept_codes)})")
+            print(f"Programlanmamış BLM ders sayısı: {len(blm_courses)}")
+            print(f"Programlanmamış YZM ders sayısı: {len(yzm_courses)}")
+            print(f"Programlanmamış ortak ders sayısı: {len(common_courses)}")
             
         # Yerleştirilen derslerin izlenmesi için set
         scheduled_courses = set()
@@ -1088,6 +1126,27 @@ def generate_schedule(term=None):
         # Dersliğe yerleştirmeye yardımcı fonksiyon
         def place_course(course, day, time_slot):
             start_time, end_time = time_slot
+            
+            # Online ders kontrolü - Online dersleri doğrudan Online dersliğine ata
+            if course.course_type == 'online':
+                online_classroom = next((c for c in classrooms if c.code == 'Online'), None)
+                if online_classroom:
+                    # Online dersler için çakışma kontrolü yok
+                    schedule = Schedule(
+                        course_id=course.id,
+                        classroom_id=online_classroom.id,
+                        day=day,
+                        start_time=start_time,
+                        end_time=end_time
+                    )
+                    db.session.add(schedule)
+                    if debug_mode:
+                        print(f"YERLEŞTİRİLDİ (ONLINE): {course.code} dersi {day} günü {start_time}-{end_time} saatlerinde Online dersliğine yerleştirildi.")
+                    return True, online_classroom
+                else:
+                    if debug_mode:
+                        print(f"ONLINE DERSLİK BULUNAMADI: {course.code} için Online dersliği yok!")
+                    return False, None
             
             # Ders için öğretim üyesi atanmış mı kontrol et
             if course.instructor_id:
@@ -1123,41 +1182,45 @@ def generate_schedule(term=None):
                             conflict_classroom = Classroom.query.get(conflict.classroom_id)
                             conflict_details.append(f"{conflict_course.code} ({conflict_classroom.code}, {conflict.start_time}-{conflict.end_time})")
                         conflict_message = ", ".join(conflict_details)
-                        print(f'Öğretim üyesi ({instructor.name}) başka derste meşgul: {conflict_message}')
+                        print(f'ÖĞRETİM ÜYESİ ÇAKIŞMASI: {instructor.name} başka derste meşgul: {conflict_message}')
                     return False, None
             
             # Bu ders için yarıyıldaki diğer derslerin çakışma kontrolü
             # Dersin yarıyılını al
             semester = course.semester
             
-            # Bu yarıyıldaki ve aynı bölümlerdeki diğer dersleri bul
-            # Şu an çoka-çok ilişki olduğu için her bölüm için ayrı kontrol yapılmalı
-            for dept in course.departments:
-                # Bu ders programdaki çakışmaları kontrol et (aynı yarıyıl ve bölüm)
-                conflict_schedules = db.session.query(Schedule).join(Course).join(
-                    course_department, Course.id == course_department.c.course_id
-                ).filter(
-                    Schedule.day == day,
-                    Schedule.start_time == start_time,
-                    Schedule.end_time == end_time,
-                    Course.semester == semester,
-                    course_department.c.department_id == dept.id
-                ).all()
+            # Sınıf seviyesini belirle (1. sınıf = 1-2. yarıyıl, 2. sınıf = 3-4. yarıyıl vb.)
+            class_level = ((semester - 1) // 2) + 1  # 1,2 -> 1. sınıf, 3,4 -> 2. sınıf, vb.
+            class_semesters = [(class_level - 1) * 2 + 1, (class_level - 1) * 2 + 2]  # O sınıfın yarıyılları
+            
+            print(f"ÇAKIŞMA KONTROLÜ: {course.code} dersi (Yarıyıl: {semester}, Sınıf: {class_level}, Kontrol edilecek yarıyıllar: {class_semesters})")
+            
+            # BÖLÜMDEN BAĞIMSIZ SINIF SEVİYESİ ÇAKIŞMA KONTROLÜ
+            # Aynı sınıf seviyesindeki TÜM dersler (hangi bölümden olursa olsun) çakışmamalı
+            conflict_schedules = db.session.query(Schedule).join(Course).filter(
+                Schedule.day == day,
+                Schedule.start_time == start_time,
+                Schedule.end_time == end_time,
+                Course.semester.in_(class_semesters)  # Aynı sınıfın tüm yarıyılları, bölüm fark etmez
+            ).all()
+            
+            if conflict_schedules:
+                conflict_courses = []
+                for schedule in conflict_schedules:
+                    conflict_course = Course.query.get(schedule.course_id)
+                    # Çakışan dersin bölümlerini de göster
+                    conflict_dept_codes = [d.code for d in conflict_course.departments]
+                    conflict_courses.append(f"{conflict_course.code} (Yarıyıl: {conflict_course.semester}, Bölümler: {', '.join(conflict_dept_codes)}, Tür: {conflict_course.course_type})")
                 
-                if conflict_schedules:
-                    if debug_mode:
-                        conflict_courses = []
-                        for schedule in conflict_schedules:
-                            conflict_course = Course.query.get(schedule.course_id)
-                            conflict_courses.append(f"{conflict_course.code}")
-                        print(f"ÇAKIŞMA: {course.code} dersi {day} günü {start_time}-{end_time} saatinde {dept.code} bölümü {semester}. yarıyıldaki şu derslerle çakışıyor: {', '.join(conflict_courses)}")
-                    return False, None
+                course_dept_codes = [d.code for d in course.departments]
+                print(f"SINIF ÇAKIŞMASI: {course.code} dersi (Bölümler: {', '.join(course_dept_codes)}, Tür: {course.course_type}) {day} günü {start_time}-{end_time} saatinde {class_level}. sınıftaki şu derslerle çakışıyor: {', '.join(conflict_courses)}")
+                return False, None
             
             # Uygun derslik bul
             suitable_classroom = None
             
             if course.practice > 0:  # Uygulamalı ders
-                lab_classrooms = [c for c in classrooms if c.type == 'LAB']
+                lab_classrooms = [c for c in classrooms if c.type == 'LAB' and c.code != 'Online']
                 free_classrooms = []
                 
                 for classroom in lab_classrooms:
@@ -1167,6 +1230,7 @@ def generate_schedule(term=None):
                             print(f"KAPASİTE YETERSİZ: {classroom.code} dersliği ({classroom.capacity} kişilik) {course.code} dersi ({course.capacity} kontenjan) için yetersiz!")
                         continue
                     
+                    # MEVCUT SCHEDULE'LARDA da derslik meşgul mu kontrol et
                     is_occupied = Schedule.query.filter_by(
                         classroom_id=classroom.id,
                         day=day,
@@ -1181,7 +1245,7 @@ def generate_schedule(term=None):
                     suitable_classroom = random.choice(free_classrooms)
             
             if not suitable_classroom:  # Normal derslik
-                normal_classrooms = [c for c in classrooms if c.type == 'NORMAL']
+                normal_classrooms = [c for c in classrooms if c.type == 'NORMAL' and c.code != 'Online']
                 free_classrooms = []
                 
                 for classroom in normal_classrooms:
@@ -1191,6 +1255,7 @@ def generate_schedule(term=None):
                             print(f"KAPASİTE YETERSİZ: {classroom.code} dersliği ({classroom.capacity} kişilik) {course.code} dersi ({course.capacity} kontenjan) için yetersiz!")
                         continue
                     
+                    # MEVCUT SCHEDULE'LARDA da derslik meşgul mu kontrol et
                     is_occupied = Schedule.query.filter_by(
                         classroom_id=classroom.id,
                         day=day,
@@ -1305,12 +1370,18 @@ def generate_schedule(term=None):
         db.session.commit()
         
         # Özet bilgiler
-        print(f"\n=== PROGRAM OLUŞTURMA TAMAMLANDI ===")
-        print(f"Toplam programlanan ders sayısı: {len(scheduled_courses)}")
+        print(f"\n=== PROGRAM TAMAMLAMA SONUÇLARI ===")
+        print(f"Mevcut programda korunan ders sayısı: {len(existing_schedules)}")
+        print(f"Yeni eklenen ders sayısı: {len(scheduled_courses)}")
+        print(f"Toplam programlanan ders sayısı: {len(existing_schedules) + len(scheduled_courses)}")
         if debug_mode:
-            print(f"Toplam ortak ders sayısı: {len(common_courses)}")
+            print(f"Programlanmamış ortak ders sayısı: {len(common_courses)}")
         
-        return True, f"{term_name} dönemi için ders programı başarıyla oluşturuldu."
+        success_message = f"{term_name} dönemi programı tamamlandı. "
+        success_message += f"Mevcut {len(existing_schedules)} ders korundu, "
+        success_message += f"{len(scheduled_courses)} yeni ders eklendi."
+        
+        return True, success_message
         
     except Exception as e:
         db.session.rollback()
@@ -1906,7 +1977,12 @@ def export_attendance(course_id):
 @admin_required
 def import_courses():
     """
-    Excel dosyasından ders verilerini içeri aktarır
+    Excel dosyasından ders verilerini içeri aktarır - YENİ FORMAT
+    Bu fonksiyon artık her sheet'i ayrı bir ders olarak işler:
+    - Sheet ismi = Ders adı ve kodu
+    - 4A = Bölüm kodu, 4B = Sınıf (öğrencinin)
+    - 2B = Öğretim üyesi ismi
+    - 4C'den başlayarak = Öğrenci numaraları
     GET: İçe aktarma formunu göster
     POST: Excel dosyasını işle ve verileri içe aktar
     """
@@ -1935,49 +2011,140 @@ def import_courses():
             temp_file.close()
             
             # Excel dosyasını aç
-            wb = load_workbook(temp_file.name)
-            ws = wb.active
+            print("\n=== Excel Dosyası Açılıyor (Yeni Format) ===")
+            try:
+                wb = load_workbook(temp_file.name)
+            except Exception as excel_error:
+                print(f"Excel dosyası açılırken hata: {str(excel_error)}")
+                flash(f'Excel dosyası açılırken hata: {str(excel_error)}', 'error')
+                return redirect(request.url)
             
-            # İşlenen ders sayıları
+            # İşleme sonuçları için sayaçlar
             added_courses = 0
             updated_courses = 0
             added_instructors = 0
+            added_students = 0
+            total_student_course_relations = 0
             
-            # Excel dosyasını satır satır işle (2. satırdan başlayarak, başlıkları atla)
-            for row in ws.iter_rows(min_row=2, values_only=True):
-                # Boş satırları atla
-                if not any(row):
-                    continue
-                
+            print(f"Excel dosyasında {len(wb.sheetnames)} sheet bulundu: {wb.sheetnames}")
+            
+            # Her sheet'i ayrı ders olarak işle
+            for sheet_name in wb.sheetnames:
                 try:
-                    # Excel sütunlarını değişkenlere ata
-                    if len(row) < 7:
-                        continue  # Yetersiz veri, atla
+                    print(f"\n=== Sheet İşleniyor: {sheet_name} ===")
+                    ws = wb[sheet_name]
+                    
+                    # Session'ı temizle (MySQL rollback problemini önlemek için)
+                    try:
+                        db.session.rollback()
+                    except:
+                        pass
+                    
+                    # Sheet ismini ders adı ve kodu olarak kullan
+                    course_name = sheet_name.strip()
+                    
+                    # Sheet isminden kısa ders kodu oluştur (max 10 karakter)
+                    def create_course_code(sheet_name):
+                        """Sheet isminden kısa ders kodu oluşturur (max 10 karakter)"""
+                        # Sheet ismini temizle ve normalize et
+                        sheet_name = str(sheet_name).strip()
                         
-                    department_code = row[0]  # BÖLÜM
-                    semester = row[1]  # YARI YIL
-                    course_code = row[2]  # DERS KODU
-                    course_name = row[3]  # DERS ADI
-                    instructor_name = row[4]  # DERSİN ÖĞRETİM ÜYESİ
-                    course_type = row[5]  # DERSİN TÜRÜ
-                    capacity = row[6]  # DERSİN KONTENJANI
+                        # Türkçe karakterleri İngilizce karşılıklarıyla değiştir
+                        char_map = {
+                            'ç': 'c', 'Ç': 'C', 'ğ': 'g', 'Ğ': 'G', 'ı': 'i', 'İ': 'I',
+                            'ö': 'o', 'Ö': 'O', 'ş': 's', 'Ş': 'S', 'ü': 'u', 'Ü': 'U'
+                        }
+                        for turkish, english in char_map.items():
+                            sheet_name = sheet_name.replace(turkish, english)
+                        
+                        # Ders adı ve kısımlarını ayır
+                        # Örnek: "Sayısal Tasarım-blm2" -> ["Sayısal Tasarım", "blm2"]
+                        parts = sheet_name.split('-')
+                        
+                        if len(parts) >= 2:
+                            course_name_part = parts[0].strip()
+                            suffix = parts[-1].strip()  # Son kısım (örn: "blm2", "yzm1", "blmyzm2-3")
+                            
+                            # Ders adından kısaltma oluştur (sadece büyük harfler ve ilk harfler)
+                            words = course_name_part.split()
+                            abbrev = ""
+                            
+                            for word in words:
+                                if word:
+                                    # Her kelimenin ilk harfini al
+                                    abbrev += word[0].upper()
+                            
+                            # Eğer kısaltma çok kısa ise, kelimelerden daha fazla harf al
+                            if len(abbrev) < 3 and words:
+                                abbrev = words[0][:3].upper()
+                            
+                            # Suffix'i temizle ve kısalt
+                            suffix_clean = suffix.replace('-', '').replace(' ', '').lower()
+                            if len(suffix_clean) > 6:
+                                suffix_clean = suffix_clean[:6]
+                            
+                            # Birleştir (max 10 karakter)
+                            code = f"{abbrev}{suffix_clean}"[:10].upper()
+                            return code
+                        else:
+                            # Tek parça ise, ders adından kısaltma
+                            words = sheet_name.split()
+                            if len(words) > 1:
+                                # Kelimelerinin ilk harflerini al
+                                code = ''.join([word[0].upper() for word in words if word])[:10]
+                            else:
+                                # Tek kelime ise ilk 10 harfini al
+                                code = words[0][:10].upper() if words else sheet_name[:10].upper()
+                            return code
                     
-                    # Bölümü kontrol et ve gerekirse oluştur
-                    department = Department.query.filter_by(code=department_code).first()
-                    if not department:
-                        department = Department(code=department_code, name=f"{department_code} Bölümü")
-                        db.session.add(department)
-                        db.session.commit()
+                    course_code = create_course_code(sheet_name)
+                    print(f"Ders kodu: {course_code} (Orijinal: {sheet_name})")
                     
-                    # Öğretim üyesi için kullanıcı adı oluştur (ad ilk 3 harf + soyad ilk 3 harf)
+                    # Sheet isminden semester (yarıyıl) bilgisini çıkar
+                    def get_semester_from_sheet(sheet_name):
+                        """Sheet isminden semester bilgisini çıkarır"""
+                        sheet_name = str(sheet_name).lower()
+                        
+                        # Sheet isminde sayı arayan pattern'ler
+                        # "blm1" -> 1, "yzm2" -> 2, "blmyzm2-3" -> 2, vb.
+                        import re
+                        
+                        # Son kısımdaki sayıları bul (örn: "blm1", "yzm2", "blmyzm2-3")
+                        matches = re.findall(r'(\d+)', sheet_name)
+                        
+                        if matches:
+                            # İlk sayıyı semester olarak al
+                            first_number = int(matches[0])
+                            
+                            # Eğer sayı 1-8 arasındaysa semester olarak kabul et
+                            if 1 <= first_number <= 8:
+                                return first_number
+                            
+                            # Eğer çok büyükse (örn: 2-3-4), ilk basamağı al
+                            if first_number > 8:
+                                return int(str(first_number)[0])
+                        
+                        # Hiç sayı yoksa varsayılan olarak 1. yarıyıl
+                        return 1
+                    
+                    semester = get_semester_from_sheet(sheet_name)
+                    print(f"Semester: {semester}")
+                    
+                    # Öğretim üyesi ismini al (2B hücresi)
+                    instructor_name = ws.cell(row=2, column=2).value
+                    print(f"Öğretim üyesi: {instructor_name}")
+                    
+                    # Öğretim üyesini kontrol et ve gerekirse oluştur
+                    instructor = None
                     if instructor_name and isinstance(instructor_name, str):
-                        name_parts = instructor_name.strip().split()
+                        instructor_name = instructor_name.strip()
+                        # İsim formatından kullanıcı adı oluştur
+                        name_parts = instructor_name.split()
                         if len(name_parts) >= 2:
                             first_name = name_parts[0][:3].lower() if len(name_parts[0]) >= 3 else name_parts[0].lower()
                             last_name = name_parts[-1][:3].lower() if len(name_parts[-1]) >= 3 else name_parts[-1].lower()
                             username = f"{first_name}{last_name}"
                             
-                            # Öğretim üyesini kontrol et ve gerekirse oluştur
                             instructor = User.query.filter_by(username=username).first()
                             if not instructor:
                                 instructor = User(
@@ -1989,60 +2156,218 @@ def import_courses():
                                 db.session.add(instructor)
                                 db.session.commit()
                                 added_instructors += 1
+                                print(f"Yeni öğretim üyesi oluşturuldu: {instructor_name}")
+                            else:
+                                print(f"Mevcut öğretim üyesi kullanılıyor: {instructor_name}")
+                    
+                    # Öğrenci verilerini topla ve bölümleri belirle
+                    student_data = []
+                    department_codes = set()
+                    
+                    # Bölüm adlarını kısa kodlara çeviren fonksiyon
+                    def get_department_code(department_name):
+                        """Uzun bölüm adını kısa koda çevirir"""
+                        department_name = str(department_name).strip().lower()
+                        
+                        # Bölüm adı mappingi
+                        department_mapping = {
+                            'bilgisayar mühendisliği': 'BLM',
+                            'bilgisayar müh.': 'BLM',
+                            'bilgisayar müh': 'BLM',
+                            'blm': 'BLM',
+                            'yazılım mühendisliği': 'YZM',
+                            'yazılım müh.': 'YZM', 
+                            'yazılım müh': 'YZM',
+                            'yzm': 'YZM',
+                            'elektrik elektronik mühendisliği': 'EEM',
+                            'elektrik elektronik müh.': 'EEM',
+                            'elektrik elektronik müh': 'EEM',
+                            'eem': 'EEM',
+                            'makine mühendisliği': 'MAK',
+                            'makine müh.': 'MAK',
+                            'makine müh': 'MAK',
+                            'mak': 'MAK'
+                        }
+                        
+                        # Mapping'de varsa döndür, yoksa ilk 3 harfi büyük harfle al
+                        if department_name in department_mapping:
+                            return department_mapping[department_name]
                         else:
-                            instructor = None
-                    else:
-                        instructor = None
+                            # İlk 3 harfi al ve büyük harfe çevir
+                            short_code = department_name[:3].upper()
+                            print(f"Bilinmeyen bölüm adı: '{department_name}' -> '{short_code}' olarak çevrildi")
+                            return short_code
                     
-                    # Ders türünü standart formata çevir
-                    course_type_normalized = 'yüzyüze' if course_type and 'YÜZ' in course_type.upper() else 'online'
+                    # 4. satırdan başlayarak öğrenci verilerini oku (her satır = 1 öğrenci)
+                    current_row = 4
+                    while current_row <= ws.max_row:
+                        # A sütunu: Bölüm kodu (bu satırdaki öğrencinin bölümü)
+                        department_code = ws.cell(row=current_row, column=1).value  # A sütunu
+                        # B sütunu: Sınıf bilgisi (bu satırdaki öğrencinin sınıfı)
+                        class_info = ws.cell(row=current_row, column=2).value  # B sütunu
+                        # C sütunu: Öğrenci numarası (bu satırdaki öğrencinin numarası)
+                        student_number = ws.cell(row=current_row, column=3).value  # C sütunu
+                        
+                        # Eğer bu satırda veri varsa işle
+                        if department_code and class_info and student_number:
+                            # Bölüm adını kısa koda çevir
+                            department_short_code = get_department_code(department_code)
+                            class_info = str(class_info).strip()
+                            student_number = str(student_number).strip()
+                            
+                            # Excel'den gelen metin formatlarını temizle
+                            if student_number.startswith("'"):
+                                student_number = student_number[1:]  # Başındaki ' işaretini kaldır
+                            
+                            # Öğrenci numarası geçerli mi kontrol et (5, 6 veya 8 haneli sayı)
+                            if student_number.isdigit() and len(student_number) in [5, 6, 8]:
+                                department_codes.add(department_short_code)  # Kısa kodu kullan
+                                
+                                # Sınıf bilgisinden yarıyıl çıkar (1. Sınıf = 1-2, 2. Sınıf = 3-4, ...)
+                                student_semester = 1  # Varsayılan
+                                if "1." in class_info:
+                                    student_semester = 1
+                                elif "2." in class_info:
+                                    student_semester = 3
+                                elif "3." in class_info:
+                                    student_semester = 5
+                                elif "4." in class_info:
+                                    student_semester = 7
+                                
+                                student_data.append({
+                                    'number': student_number,
+                                    'department': department_short_code,  # Kısa kodu kullan
+                                    'semester': student_semester
+                                })
+                                print(f"Öğrenci bulundu: {student_number} ({department_short_code}, {student_semester}. yarıyıl)")
+                            else:
+                                print(f"Geçersiz öğrenci numarası atlandı: '{student_number}' (uzunluk: {len(student_number)}, isdigit: {student_number.isdigit()})")
+                        else:
+                            # Bu satırda eksik veri varsa döngüyü kır (liste sonu)
+                            if not department_code and not class_info and not student_number:
+                                break
+                        
+                        current_row += 1
                     
-                    # Dersi kontrol et
+                    print(f"Toplam öğrenci sayısı: {len(student_data)}")
+                    print(f"Dersin verildiği bölümler: {list(department_codes)}")
+                    
+                    # Eğer öğrenci yoksa bu sheet'i atla
+                    if not student_data:
+                        print(f"UYARI: {course_name} dersinde öğrenci bulunamadı, atlanıyor.")
+                        continue
+                    
+                    # Bölümleri oluştur (yoksa)
+                    departments = []
+                    for dept_code in department_codes:
+                        department = Department.query.filter_by(code=dept_code).first()
+                        if not department:
+                            department = Department(code=dept_code, name=f"{dept_code} Bölümü")
+                            db.session.add(department)
+                            db.session.commit()
+                            print(f"Yeni bölüm oluşturuldu: {dept_code}")
+                        departments.append(department)
+                    
+                    # Dersi kontrol et ve oluştur/güncelle
                     course = Course.query.filter_by(code=course_code).first()
                     
                     if course:
                         # Ders varsa güncelle
                         course.name = course_name
-                        course.semester = int(semester) if isinstance(semester, (int, float)) else 1
-                        course.instructor_id = instructor.id if instructor else None
-                        course.course_type = course_type_normalized
-                        course.capacity = int(capacity) if isinstance(capacity, (int, float)) else 30
+                        if instructor:
+                            course.instructor_id = instructor.id
+                        course.capacity = len(student_data)  # Kontenjan = öğrenci sayısı
                         
-                        # Bölüm ilişkisini kontrol et ve ekle
-                        if department not in course.departments:
-                            course.departments.append(department)
+                        # Bölüm ilişkilerini güncelle
+                        course.departments.clear()
+                        for dept in departments:
+                            course.departments.append(dept)
                         
                         updated_courses += 1
+                        print(f"Ders güncellendi: {course_code} - {course_name}")
                     else:
-                        # Ders yoksa oluştur
+                        # Yeni ders oluştur
                         course = Course(
                             code=course_code,
                             name=course_name,
                             theory=2,  # Varsayılan değerler
                             practice=0,
                             credits=3,
-                            semester=int(semester) if isinstance(semester, (int, float)) else 1,
+                            semester=semester,  # Yarıyıl boş değil
                             instructor_id=instructor.id if instructor else None,
-                            course_type=course_type_normalized,
-                            capacity=int(capacity) if isinstance(capacity, (int, float)) else 30
+                            course_type='yüzyüze',  # Varsayılan
+                            capacity=len(student_data)  # Kontenjan = öğrenci sayısı
                         )
                         
-                        # Bölüm ilişkisi ekle
-                        course.departments.append(department)
+                        # Bölüm ilişkilerini ekle
+                        for dept in departments:
+                            course.departments.append(dept)
                         
                         db.session.add(course)
+                        db.session.commit()
                         added_courses += 1
-                        
-                    db.session.commit()
+                        print(f"Yeni ders oluşturuldu: {course_code} - {course_name}")
                     
-                except Exception as row_error:
-                    print(f"Satır işlenirken hata: {str(row_error)}")
-                    continue  # Hatalı satırı atla ve devam et
+                    # Öğrencileri oluştur ve derse kaydet
+                    for student_info in student_data:
+                        student_number = student_info['number']
+                        student_department_code = student_info['department']
+                        student_semester = student_info['semester']
+                        
+                        # Öğrencinin bölümünü bul
+                        student_department = Department.query.filter_by(code=student_department_code).first()
+                        
+                        # Öğrenciyi kontrol et
+                        student = User.query.filter_by(student_number=student_number).first()
+                        if not student:
+                            student = User(
+                                username=student_number,  # Kullanıcı adı = öğrenci numarası
+                                name=f"Öğrenci {student_number}",  # Varsayılan isim
+                                role='student',
+                                student_number=student_number,
+                                department_id=student_department.id if student_department else None,
+                                current_semester=student_semester
+                            )
+                            student.set_password('123')  # Şifre = 123
+                            db.session.add(student)
+                            db.session.commit()
+                            added_students += 1
+                            print(f"Yeni öğrenci eklendi: {student_number}")
+                        
+                        # Öğrenciyi derse kaydet (eğer henüz kayıtlı değilse)
+                        if course not in student.selected_courses:
+                            try:
+                                db.session.execute(
+                                    student_course.insert().values(
+                                        student_id=student.id,
+                                        course_id=course.id,
+                                        semester=student_semester,
+                                        status='active'
+                                    )
+                                )
+                                db.session.commit()
+                                total_student_course_relations += 1
+                            except Exception as e:
+                                db.session.rollback()
+                                print(f"Öğrenci derse eklenirken hata: {str(e)}")
+                
+                except Exception as sheet_error:
+                    print(f"Sheet işlenirken hata ({sheet_name}): {str(sheet_error)}")
+                    continue  # Hatalı sheet'i atla ve devam et
             
             # Geçici dosyayı sil
             os.unlink(temp_file.name)
             
-            flash(f'Excel içe aktarma tamamlandı: {added_courses} ders eklendi, {updated_courses} ders güncellendi, {added_instructors} öğretim üyesi eklendi.', 'success')
+            # Özet bilgileri yazdır
+            print("\n=== İçe Aktarma Özeti ===")
+            print(f"Eklenen ders sayısı: {added_courses}")
+            print(f"Güncellenen ders sayısı: {updated_courses}")
+            print(f"Eklenen öğretim üyesi sayısı: {added_instructors}")
+            print(f"Eklenen öğrenci sayısı: {added_students}")
+            print(f"Ders-öğrenci ilişki sayısı: {total_student_course_relations}")
+            
+            # Başarı mesajı göster
+            flash(f'Excel içe aktarma tamamlandı: {added_courses} ders eklendi, {updated_courses} ders güncellendi, {added_instructors} öğretim üyesi eklendi, {added_students} öğrenci eklendi.', 'success')
             return redirect(url_for('courses'))
             
         except Exception as e:
@@ -2050,6 +2375,8 @@ def import_courses():
             print(f"\n=== Hata ===")
             print(f"Hata mesajı: {str(e)}")
             print(f"Hata türü: {type(e).__name__}")
+            import traceback
+            traceback.print_exc()
             print("============\n")
     
     return render_template('import_courses.html')
@@ -2292,6 +2619,117 @@ def import_students():
             print("============\n")
     
     return render_template('import_students.html')
+
+# Veritabanını temizleme endpoint'i (Çok tehlikeli - sadece admin)
+@app.route('/clear_database', methods=['POST'])
+@admin_required
+def clear_database():
+    """
+    Veritabanındaki tüm verileri temizler (Tabloları korur, sadece verileri siler)
+    UYARI: Bu işlem geri alınamaz!
+    """
+    try:
+        # Şifre doğrulaması
+        admin_password = request.form.get('admin_password', '')
+        if not current_user.check_password(admin_password):
+            flash('Yanlış admin şifresi! Veritabanı temizlenmedi.', 'error')
+            return redirect(url_for('courses'))
+        
+        print("\n=== VERİTABANI TEMİZLENİYOR ===")
+        
+        # Foreign key constraint'leri geçici olarak devre dışı bırak
+        db.session.execute(db.text('SET FOREIGN_KEY_CHECKS = 0'))
+        
+        # Tüm tabloları temizle (veriler silinir, yapı korunur)
+        tables_to_clear = [
+            'student_course',  # İlişki tabloları önce
+            'course_department',
+            'schedule_items',
+            'unavailable_times',
+            'courses',
+            'users',
+            'departments', 
+            'classrooms'
+        ]
+        
+        cleared_count = 0
+        for table_name in tables_to_clear:
+            try:
+                result = db.session.execute(db.text(f'DELETE FROM {table_name}'))
+                row_count = result.rowcount
+                print(f"✅ {table_name} tablosu temizlendi: {row_count} satır silindi")
+                cleared_count += row_count
+            except Exception as table_error:
+                print(f"❌ {table_name} tablosu temizlenirken hata: {str(table_error)}")
+        
+        # Auto increment değerlerini sıfırla
+        for table_name in ['courses', 'users', 'departments', 'classrooms', 'schedule_items', 'unavailable_times']:
+            try:
+                db.session.execute(db.text(f'ALTER TABLE {table_name} AUTO_INCREMENT = 1'))
+                print(f"🔄 {table_name} AUTO_INCREMENT sıfırlandı")
+            except Exception as reset_error:
+                print(f"⚠️ {table_name} AUTO_INCREMENT sıfırlanırken hata: {str(reset_error)}")
+        
+        # Foreign key constraint'leri tekrar aktifleştir
+        db.session.execute(db.text('SET FOREIGN_KEY_CHECKS = 1'))
+        
+        # Değişiklikleri kaydet
+        db.session.commit()
+        
+        print(f"✅ Veritabanı başarıyla temizlendi! Toplam {cleared_count} satır silindi.")
+        print("===============================\n")
+        
+        # Başarı mesajı
+        flash(f'🗑️ Veritabanı başarıyla temizlendi! {cleared_count} satır silindi.', 'success')
+        
+    except Exception as e:
+        # Hata durumunda rollback
+        db.session.rollback()
+        print(f"❌ Veritabanı temizlenirken hata oluştu: {str(e)}")
+        flash(f'❌ Veritabanı temizlenirken hata oluştu: {str(e)}', 'error')
+    
+    return redirect(url_for('courses'))
+
+# Veritabanı durumu gösterme endpoint'i
+@app.route('/database_status')
+@admin_required  
+def database_status():
+    """
+    Veritabanındaki tablo ve satır sayılarını gösterir
+    """
+    try:
+        tables_info = []
+        
+        # Her tablo için satır sayısını al
+        table_names = ['courses', 'users', 'departments', 'classrooms', 'schedule_items', 'student_course', 'course_department', 'unavailable_times']
+        
+        total_rows = 0
+        for table_name in table_names:
+            try:
+                result = db.session.execute(db.text(f'SELECT COUNT(*) FROM {table_name}'))
+                count = result.scalar()
+                tables_info.append({
+                    'name': table_name,
+                    'count': count
+                })
+                total_rows += count
+            except Exception as table_error:
+                tables_info.append({
+                    'name': table_name,
+                    'count': f'Hata: {str(table_error)}'
+                })
+        
+        return {
+            'tables': tables_info,
+            'total_rows': total_rows,
+            'status': 'success'
+        }
+        
+    except Exception as e:
+        return {
+            'error': str(e),
+            'status': 'error'
+        }
 
 # Uygulama başlangıç kontrollerini yap ve sunucuyu başlat
 if __name__ == '__main__':
