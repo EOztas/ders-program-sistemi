@@ -1980,9 +1980,9 @@ def import_courses():
     Excel dosyasından ders verilerini içeri aktarır - YENİ FORMAT
     Bu fonksiyon artık her sheet'i ayrı bir ders olarak işler:
     - Sheet ismi = Ders adı ve kodu
-    - 4A = Bölüm kodu, 4B = Sınıf (öğrencinin)
-    - 2B = Öğretim üyesi ismi
-    - 4C'den başlayarak = Öğrenci numaraları
+    - 1B hücresi = Dersin yarıyıl bilgisi (YENİ)
+    - 2B hücresi = Öğretim üyesi ismi
+    - 4. satırdan itibaren her satır = bir öğrenci
     GET: İçe aktarma formunu göster
     POST: Excel dosyasını işle ve verileri içe aktar
     """
@@ -2100,34 +2100,32 @@ def import_courses():
                     course_code = create_course_code(sheet_name)
                     print(f"Ders kodu: {course_code} (Orijinal: {sheet_name})")
                     
-                    # Sheet isminden semester (yarıyıl) bilgisini çıkar
-                    def get_semester_from_sheet(sheet_name):
-                        """Sheet isminden semester bilgisini çıkarır"""
-                        sheet_name = str(sheet_name).lower()
-                        
-                        # Sheet isminde sayı arayan pattern'ler
-                        # "blm1" -> 1, "yzm2" -> 2, "blmyzm2-3" -> 2, vb.
-                        import re
-                        
-                        # Son kısımdaki sayıları bul (örn: "blm1", "yzm2", "blmyzm2-3")
-                        matches = re.findall(r'(\d+)', sheet_name)
-                        
-                        if matches:
-                            # İlk sayıyı semester olarak al
-                            first_number = int(matches[0])
-                            
-                            # Eğer sayı 1-8 arasındaysa semester olarak kabul et
-                            if 1 <= first_number <= 8:
-                                return first_number
-                            
-                            # Eğer çok büyükse (örn: 2-3-4), ilk basamağı al
-                            if first_number > 8:
-                                return int(str(first_number)[0])
-                        
-                        # Hiç sayı yoksa varsayılan olarak 1. yarıyıl
-                        return 1
+                    # Yarıyıl bilgisini 1B hücresinden al (YENİ)
+                    semester_value = ws.cell(row=1, column=2).value  # 1B hücresi
+                    print(f"1B hücresinden yarıyıl: {semester_value}")
                     
-                    semester = get_semester_from_sheet(sheet_name)
+                    # Yarıyıl değerini sayıya çevir
+                    semester = 1  # Varsayılan değer
+                    if semester_value:
+                        try:
+                            # Eğer doğrudan sayı ise
+                            if isinstance(semester_value, (int, float)):
+                                semester = int(semester_value)
+                            else:
+                                # String ise, içindeki sayıyı bul
+                                import re
+                                numbers = re.findall(r'\d+', str(semester_value))
+                                if numbers:
+                                    semester = int(numbers[0])
+                                    
+                            # Yarıyıl geçerli aralıkta mı kontrol et (1-8)
+                            if not (1 <= semester <= 8):
+                                print(f"UYARI: Geçersiz yarıyıl değeri: {semester}, varsayılan 1 kullanılıyor")
+                                semester = 1
+                        except ValueError:
+                            print(f"UYARI: Yarıyıl değeri okunamadı: {semester_value}, varsayılan 1 kullanılıyor")
+                            semester = 1
+                    
                     print(f"Semester: {semester}")
                     
                     # Öğretim üyesi ismini al (2B hücresi)
@@ -2274,6 +2272,7 @@ def import_courses():
                     if course:
                         # Ders varsa güncelle
                         course.name = course_name
+                        course.semester = semester  # 1B hücresinden alınan yarıyıl
                         if instructor:
                             course.instructor_id = instructor.id
                         course.capacity = len(student_data)  # Kontenjan = öğrenci sayısı
@@ -2284,7 +2283,7 @@ def import_courses():
                             course.departments.append(dept)
                         
                         updated_courses += 1
-                        print(f"Ders güncellendi: {course_code} - {course_name}")
+                        print(f"Ders güncellendi: {course_code} - {course_name} (Yarıyıl: {semester})")
                     else:
                         # Yeni ders oluştur
                         course = Course(
@@ -2293,7 +2292,7 @@ def import_courses():
                             theory=2,  # Varsayılan değerler
                             practice=0,
                             credits=3,
-                            semester=semester,  # Yarıyıl boş değil
+                            semester=semester,  # 1B hücresinden alınan yarıyıl
                             instructor_id=instructor.id if instructor else None,
                             course_type='yüzyüze',  # Varsayılan
                             capacity=len(student_data)  # Kontenjan = öğrenci sayısı
@@ -2306,7 +2305,7 @@ def import_courses():
                         db.session.add(course)
                         db.session.commit()
                         added_courses += 1
-                        print(f"Yeni ders oluşturuldu: {course_code} - {course_name}")
+                        print(f"Yeni ders oluşturuldu: {course_code} - {course_name} (Yarıyıl: {semester})")
                     
                     # Öğrencileri oluştur ve derse kaydet
                     for student_info in student_data:
